@@ -6,8 +6,12 @@ from uuid import UUID
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
+from .adapters import InMemoryAlertaRepository
+from .application import AlertasService
+from .domain import Alerta as AlertaDomain
+
 app = FastAPI(title="Microservicio de Alertas e Incidentes", version="1.0.0")
-eventos: dict[UUID, dict] = {}
+service = AlertasService(InMemoryAlertaRepository())
 
 
 class Anomalia(BaseModel):
@@ -28,10 +32,10 @@ def health():
 
 @app.post("/events/anomalies", status_code=202)
 def recibir_anomalia(evento: Anomalia):
-    eventos.setdefault(evento.event_id, {**evento.model_dump(mode="json"), "recibido_en": datetime.now(timezone.utc).isoformat(), "estado": "pendiente"})
+    service.recibir(AlertaDomain(**evento.model_dump(), recibido_en=datetime.now(timezone.utc)))
     return {"accepted": True, "event_id": evento.event_id}
 
 
 @app.get("/alerts")
 def listar_alertas():
-    return list(eventos.values())
+    return [{**a.__dict__, "event_id": str(a.event_id), "residente_id": str(a.residente_id), "dispositivo_id": str(a.dispositivo_id), "ocurrido_en": a.ocurrido_en.isoformat(), "recibido_en": a.recibido_en.isoformat()} for a in service.listar()]

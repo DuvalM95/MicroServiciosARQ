@@ -1,24 +1,13 @@
 """Interfaz gráfica local para probar el flujo de monitorización."""
 
-import asyncio
 import tkinter as tk
 from datetime import datetime, timezone
 from tkinter import messagebox, ttk
-from uuid import NAMESPACE_URL, uuid5
+from uuid import UUID
 
-from monitorizacion.adapters import InMemorySesionRepository, SimuladorSensores
-from monitorizacion.application import MonitorizacionService
-from monitorizacion.domain import AnomaliaDetectadaEvent, LecturaMetrica, UmbralSeguridad
+import httpx
 
-
-class PublicadorLocal:
-    """Recoge eventos en la demo para mostrarlos como alertas en pantalla."""
-
-    def __init__(self):
-        self.eventos: list[AnomaliaDetectadaEvent] = []
-
-    async def publicar(self, evento: AnomaliaDetectadaEvent) -> None:
-        self.eventos.append(evento)
+from cliente_api import ClienteApi
 
 
 class Aplicacion(tk.Tk):
@@ -27,31 +16,28 @@ class Aplicacion(tk.Tk):
         self.title("Monitor de residencia — demostración")
         self.geometry("900x620")
         self.minsize(760, 520)
-        self.publicador = PublicadorLocal()
-        self.service = MonitorizacionService(InMemorySesionRepository(), self.publicador, {
-            "frecuencia_cardiaca": UmbralSeguridad(50, 110, "frecuencia_cardiaca", "lpm"),
-            "temperatura_corporal": UmbralSeguridad(35.5, 38.0, "temperatura_corporal", "°C"),
-            "humedad": UmbralSeguridad(30, 70, "humedad", "%"),
-            "temperatura_ambiente": UmbralSeguridad(20, 28, "temperatura_ambiente", "°C"),
-        })
+        self.api = ClienteApi()
+        self.umbrales = {}
         self.sesion = None
+        self.apis_disponibles = False
         self._crear_interfaz()
+        self.after(100, self._cargar_umbrales)
 
     def _crear_interfaz(self):
         contenedor = ttk.Frame(self, padding=18)
         contenedor.pack(fill="both", expand=True)
         ttk.Label(contenedor, text="Monitorización de residentes", font=("Segoe UI", 19, "bold")).pack(anchor="w")
-        ttk.Label(contenedor, text="Demostración local: las lecturas y alertas se conservan mientras la ventana está abierta.").pack(anchor="w", pady=(2, 14))
+        ttk.Label(contenedor, text="Cliente de las APIs de monitorización y alertas.").pack(anchor="w", pady=(2, 14))
 
         sesion_frame = ttk.LabelFrame(contenedor, text="1. Sesión de monitoreo", padding=10)
         sesion_frame.pack(fill="x")
         ttk.Label(sesion_frame, text="ID del residente:").grid(row=0, column=0, sticky="w")
         self.residente = ttk.Entry(sesion_frame, width=39)
-        self.residente.insert(0, "residente-demo-01")
+        self.residente.insert(0, "11111111-1111-4111-8111-111111111111")
         self.residente.grid(row=0, column=1, padx=8, pady=4, sticky="w")
         ttk.Label(sesion_frame, text="ID del dispositivo:").grid(row=1, column=0, sticky="w")
         self.dispositivo = ttk.Entry(sesion_frame, width=39)
-        self.dispositivo.insert(0, "sensor-demo-01")
+        self.dispositivo.insert(0, "22222222-2222-4222-8222-222222222222")
         self.dispositivo.grid(row=1, column=1, padx=8, pady=4, sticky="w")
         self.boton_sesion = ttk.Button(sesion_frame, text="Iniciar sesión", command=self.iniciar_sesion)
         self.boton_sesion.grid(row=0, column=2, rowspan=2, padx=10)
@@ -62,7 +48,7 @@ class Aplicacion(tk.Tk):
         lectura_frame.pack(fill="x", pady=12)
         ttk.Label(lectura_frame, text="Métrica:").grid(row=0, column=0, sticky="w")
         self.metrica = tk.StringVar(value="frecuencia_cardiaca")
-        selector = ttk.Combobox(lectura_frame, textvariable=self.metrica, state="readonly", width=27, values=list(self.service.umbrales))
+        selector = ttk.Combobox(lectura_frame, textvariable=self.metrica, state="readonly", width=27, values=[])
         selector.grid(row=0, column=1, padx=7, sticky="w")
         selector.bind("<<ComboboxSelected>>", self._actualizar_unidad)
         ttk.Label(lectura_frame, text="Valor:").grid(row=0, column=2, padx=(10, 0))
@@ -71,8 +57,11 @@ class Aplicacion(tk.Tk):
         self.valor.grid(row=0, column=3, padx=7)
         self.unidad = ttk.Label(lectura_frame, text="lpm")
         self.unidad.grid(row=0, column=4, sticky="w")
-        ttk.Button(lectura_frame, text="Registrar valor", command=self.registrar_valor).grid(row=0, column=5, padx=(12, 4))
-        ttk.Button(lectura_frame, text="Simular sensor", command=self.simular).grid(row=0, column=6, padx=4)
+        self.selector_metrica = selector
+        self.boton_registrar = ttk.Button(lectura_frame, text="Registrar valor", command=self.registrar_valor, state="disabled")
+        self.boton_registrar.grid(row=0, column=5, padx=(12, 4))
+        self.boton_simular = ttk.Button(lectura_frame, text="Simular sensor", command=self.simular, state="disabled")
+        self.boton_simular.grid(row=0, column=6, padx=4)
         self.resultado = ttk.Label(lectura_frame, text="Umbral normal: 50–110 lpm")
         self.resultado.grid(row=1, column=0, columnspan=7, sticky="w", pady=(8, 0))
 
@@ -98,18 +87,41 @@ class Aplicacion(tk.Tk):
 
         pie = ttk.Frame(contenedor)
         pie.pack(fill="x", pady=(10, 0))
-        ttk.Label(pie, text="Umbrales de demostración; no son criterios médicos.").pack(side="left")
+        self.estado_apis = ttk.Label(pie, text="Conectando con APIs…")
+        self.estado_apis.pack(side="left")
+        ttk.Label(pie, text="Umbrales demostrativos; no son criterios médicos.").pack(side="left", padx=12)
         self.boton_cerrar = ttk.Button(pie, text="Cerrar sesión", command=self.cerrar_sesion, state="disabled")
         self.boton_cerrar.pack(side="right")
 
     def _actualizar_unidad(self, _evento=None):
         nombre = self.metrica.get()
-        umbral = self.service.umbrales[nombre]
-        self.unidad.configure(text=umbral.unidad_medida)
-        self.resultado.configure(text=f"Umbral configurado: {umbral.valor_minimo:g}–{umbral.valor_maximo:g} {umbral.unidad_medida}")
+        umbral = self.umbrales.get(nombre)
+        if umbral:
+            self.unidad.configure(text=umbral["unidad"])
+            self.resultado.configure(text=f"Umbral configurado: {umbral['minimo']:g}–{umbral['maximo']:g} {umbral['unidad']}")
+
+    def _cargar_umbrales(self):
+        try:
+            self.umbrales = self.api.obtener_umbrales()
+            nombres = list(self.umbrales)
+            self.selector_metrica.configure(values=nombres)
+            if nombres and self.metrica.get() not in self.umbrales:
+                self.metrica.set(nombres[0])
+            self._actualizar_unidad()
+            self.apis_disponibles = bool(self.umbrales)
+            estado_boton = "normal" if self.apis_disponibles else "disabled"
+            self.boton_registrar.configure(state=estado_boton)
+            self.boton_simular.configure(state=estado_boton)
+            self.estado_apis.configure(text="API de monitorización conectada")
+        except httpx.HTTPError:
+            self.apis_disponibles = False
+            self.boton_registrar.configure(state="disabled")
+            self.boton_simular.configure(state="disabled")
+            self.estado_apis.configure(text="API no disponible; inicia los dos servicios")
+            self.after(5000, self._cargar_umbrales)
 
     def iniciar_sesion(self):
-        if self.sesion and self.sesion.estado == "activa":
+        if self.sesion:
             messagebox.showinfo("Sesión activa", "Cierra la sesión actual antes de iniciar otra.")
             return
         residente = self.residente.get().strip()
@@ -117,31 +129,44 @@ class Aplicacion(tk.Tk):
         if not residente or not dispositivo:
             messagebox.showerror("Faltan datos", "Escribe un ID para el residente y el dispositivo.")
             return
-        # IDs de demo estables que cumplen el tipo UUID del dominio.
-        residente_id = uuid5(NAMESPACE_URL, f"demo:residente:{residente}")
-        dispositivo_id = uuid5(NAMESPACE_URL, f"demo:dispositivo:{dispositivo}")
-        self.sesion = self.service.iniciar_sesion(residente_id, dispositivo_id)
-        self.estado.configure(text=f"Sesión activa: {self.sesion.session_id}")
-        self.boton_sesion.configure(state="disabled")
-        self.boton_cerrar.configure(state="normal")
+        try:
+            data = self.api.iniciar_sesion(str(UUID(residente)), str(UUID(dispositivo)))
+            self.sesion = data["session_id"]
+            self.estado.configure(text=f"Sesión activa: {self.sesion}")
+            self.boton_sesion.configure(state="disabled")
+            self.boton_cerrar.configure(state="normal")
+        except ValueError:
+            messagebox.showerror("UUID inválido", "Los IDs deben ser UUID válidos. Puedes generar uno con uuidgen.")
+        except httpx.HTTPError as exc:
+            messagebox.showerror("API no disponible", f"No se pudo iniciar la sesión: {exc}")
 
     def _registrar(self, numero):
-        if not self.sesion or self.sesion.estado != "activa":
+        if not self.apis_disponibles or not self.umbrales:
+            messagebox.showerror("API no disponible", "No se pudieron cargar los umbrales. Comprueba que monitorización esté activa en http://localhost:8000 y vuelve a abrir la interfaz.")
+            return
+        if not self.sesion:
             messagebox.showwarning("Inicia una sesión", "Primero inicia la sesión de monitoreo.")
             return
         nombre = self.metrica.get()
-        umbral = self.service.umbrales[nombre]
-        lectura = LecturaMetrica(numero, umbral.unidad_medida, datetime.now(timezone.utc))
         try:
-            _, evento = asyncio.run(self.service.procesar_lectura(self.sesion.session_id, nombre, lectura))
-        except ValueError as exc:
-            messagebox.showerror("Lectura inválida", str(exc))
+            unidad = self.umbrales[nombre]["unidad"]
+            data = self.api.registrar_lectura(self.sesion, nombre, numero, unidad, datetime.now(timezone.utc))
+        except (httpx.HTTPError, KeyError) as exc:
+            messagebox.showerror("Error al registrar", f"No se pudo registrar la lectura: {exc}")
             return
-        estado = f"ALERTA {evento.severidad}" if evento else "Normal"
-        self.lecturas.insert("", "end", values=(lectura.timestamp.strftime("%H:%M:%S"), nombre, f"{numero:g} {lectura.unidad_medida}", estado))
-        self.resultado.configure(text=f"Lectura {estado.lower()}: {numero:g} {lectura.unidad_medida}")
-        if evento:
-            self.alertas.insert("", "end", values=(evento.ocurrido_en.strftime("%H:%M:%S"), nombre, f"{numero:g} {lectura.unidad_medida}", evento.severidad), tags=(evento.severidad,))
+        estado = f"ALERTA {data['severidad']}" if data["anomalia"] else "Normal"
+        self.lecturas.insert("", "end", values=(datetime.now().strftime("%H:%M:%S"), nombre, f"{numero:g} {unidad}", estado))
+        self.resultado.configure(text=f"Lectura {estado.lower()}: {numero:g} {unidad}")
+        self._actualizar_alertas()
+
+    def _actualizar_alertas(self):
+        try:
+            alertas = self.api.listar_alertas()
+            self.alertas.delete(*self.alertas.get_children())
+            for evento in alertas:
+                self.alertas.insert("", "end", values=(evento["ocurrido_en"].split("T")[-1][:8], evento["metrica"], f"{evento['valor_registrado']:g} {evento['unidad_medida']}", evento["severidad"]), tags=(evento["severidad"],))
+        except httpx.HTTPError as exc:
+            messagebox.showerror("API de alertas", f"No se pudieron consultar las alertas: {exc}")
 
     def registrar_valor(self):
         try:
@@ -153,12 +178,31 @@ class Aplicacion(tk.Tk):
 
     def simular(self):
         nombre = self.metrica.get()
-        self._registrar(SimuladorSensores.generar_lectura(nombre))
+        if not self.apis_disponibles or nombre not in self.umbrales:
+            messagebox.showerror("API no disponible", "No se pudieron cargar los umbrales. Comprueba que monitorización esté activa en http://localhost:8000 y vuelve a abrir la interfaz.")
+            return
+        if not self.sesion:
+            messagebox.showwarning("Inicia una sesión", "Primero inicia la sesión de monitoreo.")
+            return
+        try:
+            data = self.api.simular_lectura(self.sesion, nombre)
+            unidad = self.umbrales[nombre]["unidad"]
+            estado = f"ALERTA {data['severidad']}" if data["anomalia"] else "Normal"
+            self.lecturas.insert("", "end", values=(datetime.now().strftime("%H:%M:%S"), nombre, f"{data['valor']:g} {unidad}", estado))
+            self.resultado.configure(text=f"Lectura {estado.lower()}: {data['valor']:g} {unidad}")
+            self._actualizar_alertas()
+        except httpx.HTTPError as exc:
+            messagebox.showerror("Error al simular", f"No se pudo consultar la API: {exc}")
 
     def cerrar_sesion(self):
         if self.sesion:
-            self.service.cerrar_sesion(self.sesion.session_id)
-            self.estado.configure(text=f"Sesión cerrada: {self.sesion.session_id}")
+            try:
+                self.api.cerrar_sesion(self.sesion)
+            except httpx.HTTPError as exc:
+                messagebox.showerror("Error", f"No se pudo cerrar la sesión: {exc}")
+                return
+            self.estado.configure(text=f"Sesión cerrada: {self.sesion}")
+            self.sesion = None
             self.boton_cerrar.configure(state="disabled")
             self.boton_sesion.configure(state="normal")
 

@@ -22,7 +22,7 @@ class InMemorySesionRepository:
 
 class HttpEventPublisher:
     def __init__(self, alerts_url: str | None = None):
-        self.alerts_url = (alerts_url or os.getenv("ALERTS_SERVICE_URL", "http://localhost:8001" )).rstrip("/")
+        self.alerts_url = (alerts_url or os.getenv("ALERTS_SERVICE_URL", "http://localhost:8001")).rstrip("/")
 
     async def publicar(self, evento: AnomaliaDetectadaEvent) -> None:
         payload = {

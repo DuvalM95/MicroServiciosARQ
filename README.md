@@ -14,15 +14,15 @@ pip install -r requirements.txt
 
 ## Ejecutar
 
-### Interfaz gráfica sencilla (recomendado para probar)
+### Interfaz conectada a las APIs
 
-Instala los requisitos una vez y ejecuta:
+Inicia los dos servicios HTTP en terminales separadas como se indica abajo. Luego abre una tercera terminal y ejecuta:
 
 ```powershell
 python interfaz.py
 ```
 
-Se abre una ventana para iniciar una sesión, registrar una lectura manual (por ejemplo, frecuencia cardiaca `125`) o simular el sensor. Las anomalías aparecen en la tabla de alertas. Esta demostración funciona en un solo proceso, usa el dominio y caso de uso del microservicio y mantiene los datos en memoria mientras la ventana está abierta. No necesitas iniciar los servicios HTTP para usar la ventana.
+La interfaz está separada en presentación (`interfaz.py`) y adaptador HTTP (`cliente_api.py`). Usa las APIs para obtener umbrales, iniciar y cerrar sesiones, registrar lecturas, pedir simulaciones a monitorización y consultar alertas. Los IDs deben ser UUID. Ambos servicios deben estar activos para completar el flujo.
 
 ### APIs HTTP
 
@@ -36,7 +36,7 @@ python -m alertas
 python -m monitorizacion
 ```
 
-La API de monitorización queda en http://localhost:8000 y la de alertas en http://localhost:8001. La documentación interactiva está en `/docs` en cada servicio. Configure `ALERTS_SERVICE_URL` si alertas se ejecuta en otra dirección.
+La API de monitorización queda en http://localhost:8000 y la de alertas en http://localhost:8001. La documentación interactiva está en `/docs` en cada servicio. Configure `ALERTS_SERVICE_URL` para que monitorización publique a otra dirección de alertas, y `MONITORIZACION_SERVICE_URL` para que la interfaz apunte a otro host o puerto.
 
 ## Flujo rápido
 
