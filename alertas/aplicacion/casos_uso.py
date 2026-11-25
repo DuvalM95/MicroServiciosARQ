@@ -3,7 +3,7 @@
 from typing import Protocol
 from uuid import UUID
 
-from .domain import Alerta
+from ..dominio.modelos import Alerta
 
 
 class AlertaRepositoryPort(Protocol):

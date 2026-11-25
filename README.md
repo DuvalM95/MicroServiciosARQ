@@ -2,6 +2,22 @@
 
 Prototipo Python basado en los diagramas compartidos. Implementa el microservicio de monitorización con arquitectura hexagonal y dominio `SesionMonitoreo`, `LecturaMetrica`, `UmbralSeguridad` y `AnomaliaDetectadaEvent`. El servicio de alertas recibe eventos mediante HTTP.
 
+## Organización por arquitectura limpia
+
+Cada microservicio mantiene sus capas dentro de su propio paquete:
+
+```text
+monitorizacion/                 alertas/
+├── dominio/                    ├── dominio/
+├── aplicacion/                 ├── aplicacion/
+├── infraestructura/            ├── infraestructura/
+└── interfaces/                 └── interfaces/
+```
+
+En monitorización, `SesionMonitoreo` es el agregado raíz; `LecturaMetrica` y `UmbralSeguridad` son objetos de valor; `EvaluadorDeRiesgoService` aplica la regla de severidad; y `AnomaliaDetectadaEvent` es el evento de dominio. Aplicación define `SensorInputPort`, `SesionRepositoryPort` y `EventPublisherPort`, además de los casos `ProcesarLecturaSensorUseCase` y `SimularLecturaSensorUseCase`. Infraestructura aporta `SimuladorSensoresAdapter`, `SesionRepositoryAdapter` y `EventBusPublisherAdapter`. Antes de salir del servicio, el evento de dominio se transforma en `AnomaliaDetectadaIntegrationEvent`.
+
+La regla de dependencias apunta hacia adentro: dominio no importa FastAPI, HTTPX ni adaptadores. `interfaces/api.py` actúa como punto de composición, crea las implementaciones concretas y las inyecta en los casos de uso.
+
 ## Requisitos
 
 Python 3.11 o superior.

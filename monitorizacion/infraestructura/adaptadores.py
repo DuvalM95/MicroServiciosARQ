@@ -6,10 +6,11 @@ from uuid import UUID
 
 import httpx
 
-from .domain import AnomaliaDetectadaEvent, SesionMonitoreo
+from ..aplicacion.eventos import AnomaliaDetectadaIntegrationEvent
+from ..dominio.modelos import LecturaMetrica, SesionMonitoreo
 
 
-class InMemorySesionRepository:
+class SesionRepositoryAdapter:
     def __init__(self):
         self._sesiones: dict[UUID, SesionMonitoreo] = {}
 
@@ -20,11 +21,11 @@ class InMemorySesionRepository:
         return self._sesiones.get(session_id)
 
 
-class HttpEventPublisher:
+class EventBusPublisherAdapter:
     def __init__(self, alerts_url: str | None = None):
         self.alerts_url = (alerts_url or os.getenv("ALERTS_SERVICE_URL", "http://localhost:8001")).rstrip("/")
 
-    async def publicar(self, evento: AnomaliaDetectadaEvent) -> None:
+    async def publicar(self, evento: AnomaliaDetectadaIntegrationEvent) -> None:
         payload = {
             "event_id": str(evento.event_id), "residente_id": str(evento.residente_id),
             "dispositivo_id": str(evento.dispositivo_id), "metrica": evento.metrica,
@@ -36,9 +37,8 @@ class HttpEventPublisher:
             response.raise_for_status()
 
 
-class SimuladorSensores:
-    @staticmethod
-    def generar_lectura(metrica: str) -> float:
+class SimuladorSensoresAdapter:
+    def leer(self, metrica: str, unidad_medida: str) -> LecturaMetrica:
         rangos = {"frecuencia_cardiaca": (45, 145), "temperatura_corporal": (35.0, 40.5), "humedad": (25, 85), "temperatura_ambiente": (18, 34)}
         minimo, maximo = rangos.get(metrica, (0, 100))
-        return round(random.uniform(minimo, maximo), 1)
+        return LecturaMetrica(round(random.uniform(minimo, maximo), 1), unidad_medida)

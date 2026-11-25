@@ -6,18 +6,18 @@ from uuid import UUID
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from .adapters import HttpEventPublisher, InMemorySesionRepository, SimuladorSensores
-from .application import MonitorizacionService
-from .domain import LecturaMetrica, UmbralSeguridad
+from ..aplicacion.casos_uso import MonitorizacionService
+from ..dominio.modelos import EvaluadorDeRiesgoService, LecturaMetrica, UmbralSeguridad
+from ..infraestructura.adaptadores import EventBusPublisherAdapter, SesionRepositoryAdapter, SimuladorSensoresAdapter
 
 app = FastAPI(title="Microservicio de Monitorización", version="1.0.0", description="Sesiones de monitorización y detección de anomalías.")
-repository = InMemorySesionRepository()
-service = MonitorizacionService(repository, HttpEventPublisher(), {
+repository = SesionRepositoryAdapter()
+service = MonitorizacionService(repository, EventBusPublisherAdapter(), SimuladorSensoresAdapter(), {
     "frecuencia_cardiaca": UmbralSeguridad(50, 110, "frecuencia_cardiaca", "lpm"),
     "temperatura_corporal": UmbralSeguridad(35.5, 38.0, "temperatura_corporal", "°C"),
     "humedad": UmbralSeguridad(30, 70, "humedad", "%"),
     "temperatura_ambiente": UmbralSeguridad(20, 28, "temperatura_ambiente", "°C"),
-})
+}, EvaluadorDeRiesgoService())
 
 
 class IniciarSesion(BaseModel):
@@ -51,7 +51,7 @@ def iniciar_sesion(body: IniciarSesion):
 @app.post("/sessions/{session_id}/readings", status_code=201)
 async def registrar_lectura(session_id: UUID, body: NuevaLectura):
     try:
-        sesion, evento = await service.procesar_lectura(session_id, body.metrica, LecturaMetrica(body.valor, body.unidad_medida, body.timestamp or datetime.now().astimezone()))
+        sesion, evento = await service.registrar_lectura(session_id, body.metrica, LecturaMetrica(body.valor, body.unidad_medida, body.timestamp or datetime.now().astimezone()))
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:
@@ -63,10 +63,15 @@ async def registrar_lectura(session_id: UUID, body: NuevaLectura):
 
 @app.post("/sessions/{session_id}/simulate", status_code=201)
 async def simular_lectura(session_id: UUID, metrica: str = "frecuencia_cardiaca"):
-    unidad = service.umbrales.get(metrica)
-    if unidad is None:
-        raise HTTPException(404, "Métrica sin umbral configurado")
-    return await registrar_lectura(session_id, NuevaLectura(metrica=metrica, valor=SimuladorSensores.generar_lectura(metrica), unidad_medida=unidad.unidad_medida))
+    try:
+        sesion, lectura, evento = await service.simular(session_id, metrica)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(503, f"No se pudo entregar el evento al servicio de alertas: {exc}") from exc
+    return {"session_id": sesion.session_id, "metrica": metrica, "valor": lectura.valor, "unidad_medida": lectura.unidad_medida, "anomalia": evento is not None, "evento_id": evento.event_id if evento else None, "severidad": evento.severidad if evento else None}
 
 
 @app.post("/sessions/{session_id}/close")

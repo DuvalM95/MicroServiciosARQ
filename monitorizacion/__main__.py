@@ -1,3 +1,3 @@
 import uvicorn
 
-uvicorn.run("monitorizacion.api:app", host="0.0.0.0", port=8000, reload=False)
+uvicorn.run("monitorizacion.interfaces.api:app", host="0.0.0.0", port=8000, reload=False)

@@ -44,6 +44,19 @@ class AnomaliaDetectadaEvent:
     ocurrido_en: datetime
 
 
+class EvaluadorDeRiesgoService:
+    """Servicio de dominio que aplica la regla de severidad del umbral."""
+
+    def determinar_severidad(self, lectura: LecturaMetrica, umbral: UmbralSeguridad) -> str | None:
+        if lectura.unidad_medida != umbral.unidad_medida:
+            raise ValueError(f"Unidad inválida para {umbral.tipo_metrica}: se esperaba {umbral.unidad_medida}")
+        if not umbral.esta_fuera_de_rango(lectura.valor):
+            return None
+        margen = umbral.valor_maximo - umbral.valor_minimo
+        distancia = umbral.valor_minimo - lectura.valor if lectura.valor < umbral.valor_minimo else lectura.valor - umbral.valor_maximo
+        return "critica" if margen <= 0 or distancia >= margen * 0.25 else "advertencia"
+
+
 @dataclass
 class SesionMonitoreo:
     residente_id: UUID
@@ -61,6 +74,12 @@ class SesionMonitoreo:
             raise ValueError("La lectura no es válida")
         self.lecturas.append(lectura)
 
+    def evaluar_riesgo(self, metrica: str, lectura: LecturaMetrica, umbral: UmbralSeguridad, evaluador: EvaluadorDeRiesgoService) -> AnomaliaDetectadaEvent | None:
+        severidad = evaluador.determinar_severidad(lectura, umbral)
+        if severidad is None:
+            return None
+        return AnomaliaDetectadaEvent(uuid4(), self.residente_id, self.dispositivo_id, metrica, lectura.valor, lectura.unidad_medida, severidad, lectura.timestamp)
+
     def cerrar(self) -> None:
         if self.estado == EstadoSesion.CERRADA:
             return
@@ -68,15 +87,3 @@ class SesionMonitoreo:
         self.fecha_fin = datetime.now(timezone.utc)
 
 
-def determinar_severidad(lectura: LecturaMetrica, umbral: UmbralSeguridad) -> str | None:
-    if lectura.unidad_medida != umbral.unidad_medida:
-        raise ValueError(f"Unidad inválida para {umbral.tipo_metrica}: se esperaba {umbral.unidad_medida}")
-    if not umbral.esta_fuera_de_rango(lectura.valor):
-        return None
-    margen = umbral.valor_maximo - umbral.valor_minimo
-    distancia = umbral.valor_minimo - lectura.valor if lectura.valor < umbral.valor_minimo else lectura.valor - umbral.valor_maximo
-    return "critica" if margen <= 0 or distancia >= margen * 0.25 else "advertencia"
-
-
-def crear_evento(sesion: SesionMonitoreo, metrica: str, lectura: LecturaMetrica, severidad: str) -> AnomaliaDetectadaEvent:
-    return AnomaliaDetectadaEvent(uuid4(), sesion.residente_id, sesion.dispositivo_id, metrica, lectura.valor, lectura.unidad_medida, severidad, lectura.timestamp)

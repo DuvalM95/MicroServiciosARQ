@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from .domain import Alerta
+from ..dominio.modelos import Alerta
 
 
 class InMemoryAlertaRepository:

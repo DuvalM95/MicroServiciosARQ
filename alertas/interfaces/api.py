@@ -6,9 +6,9 @@ from uuid import UUID
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
-from .adapters import InMemoryAlertaRepository
-from .application import AlertasService
-from .domain import Alerta as AlertaDomain
+from ..aplicacion.casos_uso import AlertasService
+from ..dominio.modelos import Alerta as AlertaDomain
+from ..infraestructura.repositorio import InMemoryAlertaRepository
 
 app = FastAPI(title="Microservicio de Alertas e Incidentes", version="1.0.0")
 service = AlertasService(InMemoryAlertaRepository())
